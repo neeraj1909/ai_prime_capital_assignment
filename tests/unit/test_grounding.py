@@ -3,6 +3,7 @@ from math import inf, nan
 import pytest
 
 from ai_prime_capital.domain.grounding import (
+    MAX_SNIPPET_CHARS,
     NO_RELEVANT_INFORMATION,
     build_grounded_answer,
     qualify_candidates,
@@ -191,6 +192,48 @@ def test_positive_answer_uses_only_server_owned_candidate_metadata() -> None:
             ),
         ),
     )
+
+
+def test_source_snippets_are_normalized_and_bounded() -> None:
+    retrieved = candidate(
+        "chunk-a",
+        text="  Revenue   increased.\n\nThe quarter\twas strong.  ",
+    )
+    answer = build_grounded_answer(
+        ModelDecision(answerable=True, answer="Revenue increased.", citations=("chunk-a",)),
+        (retrieved,),
+    )
+
+    assert answer.grounded is True
+    assert answer.sources[0].snippet == "Revenue increased. The quarter was strong."
+
+    long_text = "word " * MAX_SNIPPET_CHARS
+    long_answer = build_grounded_answer(
+        ModelDecision(answerable=True, answer="answer", citations=("chunk-a",)),
+        (candidate("chunk-a", text=long_text),),
+    )
+
+    snippet = long_answer.sources[0].snippet
+    assert len(snippet) == MAX_SNIPPET_CHARS
+    assert snippet.endswith("...")
+    assert snippet.startswith("word word")
+
+
+@pytest.mark.parametrize(
+    "decision",
+    [
+        object(),
+        ModelDecision(answerable=True, answer=None, citations=("chunk-a",)),  # type: ignore[arg-type]
+        ModelDecision(answerable=True, answer="answer", citations=None),  # type: ignore[arg-type]
+        ModelDecision(answerable=True, answer="answer", citations=(["chunk-a"],)),  # type: ignore[arg-type]
+    ],
+)
+def test_malformed_model_decisions_fail_closed_without_leaking_exceptions(
+    decision: object,
+) -> None:
+    answer = build_grounded_answer(decision, (candidate("chunk-a"),))  # type: ignore[arg-type]
+
+    assert_no_relevant_information(answer)
 
 
 @pytest.mark.parametrize(

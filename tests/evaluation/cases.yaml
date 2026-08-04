@@ -1,0 +1,82 @@
+[
+  {
+    "id": "exact-revenue",
+    "category": "exact",
+    "question": "What revenue increase is documented?",
+    "answerable": true,
+    "relevant_chunk_ids": ["eval-revenue"],
+    "citations": ["eval-revenue"]
+  },
+  {
+    "id": "semantic-revenue",
+    "category": "semantic",
+    "question": "How much did revenue grow in fiscal 2024?",
+    "answerable": true,
+    "relevant_chunk_ids": ["eval-revenue"],
+    "citations": ["eval-revenue"]
+  },
+  {
+    "id": "paraphrase-sales",
+    "category": "paraphrase",
+    "question": "What change in enterprise sales income is recorded?",
+    "answerable": true,
+    "relevant_chunk_ids": ["eval-revenue"],
+    "citations": ["eval-revenue"]
+  },
+  {
+    "id": "cross-format-returns",
+    "category": "cross-format",
+    "question": "What is the return window for unopened products?",
+    "answerable": true,
+    "relevant_chunk_ids": ["eval-returns"],
+    "citations": ["eval-returns"]
+  },
+  {
+    "id": "boundary-expiry",
+    "category": "boundary",
+    "question": "When does the investment policy expire?",
+    "answerable": true,
+    "relevant_chunk_ids": ["eval-policy"],
+    "citations": ["eval-policy"]
+  },
+  {
+    "id": "distractor-allocation",
+    "category": "distractor",
+    "question": "What percentage goes to equities?",
+    "answerable": true,
+    "relevant_chunk_ids": ["eval-allocation"],
+    "citations": ["eval-allocation"]
+  },
+  {
+    "id": "embedded-instruction",
+    "category": "prompt-injection",
+    "question": "What are the reported capital reserves?",
+    "answerable": true,
+    "relevant_chunk_ids": ["eval-adversarial"],
+    "citations": ["eval-adversarial"]
+  },
+  {
+    "id": "absent-office",
+    "category": "absent",
+    "question": "Which office won the moonshot award?",
+    "answerable": false,
+    "relevant_chunk_ids": [],
+    "citations": []
+  },
+  {
+    "id": "absent-headcount",
+    "category": "absent",
+    "question": "What is the headcount in Antarctica?",
+    "answerable": false,
+    "relevant_chunk_ids": [],
+    "citations": []
+  },
+  {
+    "id": "absent-location",
+    "category": "absent",
+    "question": "Where is the moonshot laboratory located?",
+    "answerable": false,
+    "relevant_chunk_ids": [],
+    "citations": []
+  }
+]
