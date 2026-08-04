@@ -17,27 +17,71 @@ live answer-quality claim is made.
 ## Architecture
 
 ```text
-FastAPI routes + problem responses + request IDs
-                    |
-             application use cases
-       (ingest documents / answer question)
-                    |
-       domain rules and typed infrastructure ports
-          /          |          |          \
-     extractors   tiktoken   OpenAI      Qdrant
+                         HTTP / JSON / multipart
+                                  |
+                     API delivery layer (FastAPI)
+                   routes · schemas · safe errors
+                                  |
+                         application use cases
+                  IngestDocuments · AnswerQuestion
+                         /                 \
+              deterministic rules      typed ports
+             identity · chunking ·     ExtractorPort
+             grounding · provenance    EmbedderPort
+                                      GeneratorPort
+                                     VectorStorePort
+                                           ^
+                                           |
+                               infrastructure adapters
+                       PDF/DOCX/TXT · OpenAI · Qdrant
+
+Composition root: config.py + bootstrap.py + main.py
 ```
 
-- `src/ai_prime_capital/api/` contains transport-only schemas, routes, dependency
-  providers, health, OpenAPI examples, and RFC 9457-style error responses.
-- `src/ai_prime_capital/application/` coordinates validation, extraction,
-  chunking, embedding, retrieval, generation, and the evidence gate.
-- `src/ai_prime_capital/domain/` owns identities, chunks, grounding, citations,
-  and the exact no-answer contract without framework or provider imports.
-- `src/ai_prime_capital/infrastructure/` adapts PDF/DOCX/TXT extraction, OpenAI,
-  and Qdrant behind small typed ports.
-- `src/ai_prime_capital/bootstrap.py` initializes shared clients once per
-  FastAPI lifespan and fails readiness closed when required dependencies are not
-  available.
+Dependencies point inward: the API and infrastructure depend on the application
+contracts and domain types; the application does not import FastAPI, OpenAI, or
+Qdrant. Vendor SDK objects and transport models therefore stop at their adapter
+boundaries.
+
+| Area | Responsibility | Deliberately excluded |
+|---|---|---|
+| `api/` | HTTP routes, request/response schemas, dependency providers, OpenAPI, request IDs, and safe problem responses | extraction, retrieval, prompting, and grounding policy |
+| `application/` | Coordinates the two use cases and defines the narrow extractor, embedding, generation, and vector-store ports | HTTP and vendor SDK types |
+| `domain/` | Deterministic identities, chunk/provenance models, evidence qualification, citation validation, and the exact no-answer result | FastAPI, OpenAI, and Qdrant concerns |
+| `infrastructure/` | Bounded PDF/DOCX/TXT extraction plus OpenAI Responses/embedding and Qdrant adapters | public API contracts and business decisions |
+| `bootstrap.py` | Composition root and lifecycle ownership; constructs shared clients, probes readiness, and closes resources | request-specific behavior |
+
+### Request flows
+
+Document ingestion follows one ordered pipeline:
+
+```text
+multipart upload
+  -> validate count, size, type, signature, and archive safety
+  -> extract text with provenance
+  -> create deterministic token-bounded chunks and IDs
+  -> request embeddings
+  -> idempotently upsert named vectors and payloads into Qdrant
+  -> return stable document IDs and chunk counts
+```
+
+Question answering has an explicit evidence gate before generation:
+
+```text
+question
+  -> validate and embed
+  -> retrieve threshold-qualified Qdrant candidates
+  -> no candidates: return the exact fallback without calling the answer model
+  -> candidates: request a strict structured OpenAI Responses decision
+  -> validate every cited ID against the retrieved set
+  -> build answer sources only from server-owned chunk metadata
+```
+
+This separation keeps the highest-risk rules—threshold qualification, the
+no-answer decision, citation membership, and returned provenance—deterministic
+and testable outside the model. `bootstrap.py` creates shared adapters once per
+FastAPI lifespan; readiness stays false when provider access or the Qdrant
+collection contract is unavailable or incompatible.
 
 ## Technology choices
 
@@ -55,7 +99,9 @@ uv sync --locked
 cp .env.example .env
 ```
 
-Set at least `OPENAI_API_KEY` and `OPENAI_CHAT_MODEL` in `.env`. The default
+Set at least `OPENAI_API_KEY` and `OPENAI_CHAT_MODEL` in `.env`. Compose reads
+those two values from the project `.env` file (exported shell variables are not
+forwarded), so recreate the API after changing the file. The default
 runtime also needs a reachable Qdrant instance at `QDRANT_URL` (default:
 `http://localhost:6333`). Do not commit `.env` or credentials.
 
@@ -195,8 +241,11 @@ uv run --locked python scripts/e2e.py --help
 If Qdrant is already available, run the integration gate separately:
 
 ```bash
-timeout 60 uv run --locked pytest -m integration --no-cov
+REQUIRE_QDRANT_INTEGRATION=1 timeout 60 uv run --locked pytest -m integration --no-cov
 ```
+
+The `REQUIRE_QDRANT_INTEGRATION=1` guard makes an unavailable Qdrant service a
+failed gate instead of a green run with skipped tests.
 
 Regenerate the reviewer-facing dependency export without hashes/annotations:
 

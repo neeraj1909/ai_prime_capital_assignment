@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from io import BytesIO
 from pathlib import Path
+from zipfile import ZIP_DEFLATED, ZipFile
 
 import pytest
 from docx import Document
 from pypdf import PdfReader, PdfWriter
 from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
+import ai_prime_capital.infrastructure.extractors.pdf as pdf_module
 from ai_prime_capital.config import Settings
 from ai_prime_capital.domain.models import ExtractedBlock
 from ai_prime_capital.infrastructure.extractors.base import (
@@ -95,6 +97,20 @@ def docx_bytes(*, nested_table: bool = False, textless: bool = False) -> bytes:
 
     output = BytesIO()
     document.save(output)
+    return output.getvalue()
+
+
+def malformed_docx_xml_bytes() -> bytes:
+    source = BytesIO(docx_bytes())
+    output = BytesIO()
+    with ZipFile(source) as archive, ZipFile(output, "w", compression=ZIP_DEFLATED) as rebuilt:
+        for info in archive.infolist():
+            content = (
+                b"<w:document><w:body"
+                if info.filename == "word/document.xml"
+                else archive.read(info)
+            )
+            rebuilt.writestr(info, content)
     return output.getvalue()
 
 
@@ -186,6 +202,19 @@ async def test_pdf_extractor_rejects_malformed_document() -> None:
 
 
 @pytest.mark.asyncio
+async def test_pdf_extractor_maps_unexpected_parser_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    def raise_parser_error(*_args: object, **_kwargs: object) -> object:
+        raise RuntimeError("malformed parser state")
+
+    monkeypatch.setattr(pdf_module, "PdfReader", raise_parser_error)
+
+    with pytest.raises(UploadRejected) as error:
+        await extract_pdf(b"%PDF-1.7\ncontent")
+
+    assert_rejected(error, UploadErrorCode.INVALID_DOCUMENT)
+
+
+@pytest.mark.asyncio
 async def test_pdf_extractor_rejects_encrypted_document() -> None:
     with pytest.raises(UploadRejected) as error:
         await extract_pdf(encrypted_pdf_bytes())
@@ -227,6 +256,14 @@ async def test_docx_extractor_preserves_paragraph_and_table_order() -> None:
 async def test_docx_extractor_rejects_malformed_document() -> None:
     with pytest.raises(UploadRejected) as error:
         await extract_docx(b"not a DOCX package")
+
+    assert_rejected(error, UploadErrorCode.INVALID_DOCUMENT)
+
+
+@pytest.mark.asyncio
+async def test_docx_extractor_rejects_malformed_xml_after_zip_validation() -> None:
+    with pytest.raises(UploadRejected) as error:
+        await extract_docx(malformed_docx_xml_bytes())
 
     assert_rejected(error, UploadErrorCode.INVALID_DOCUMENT)
 

@@ -42,6 +42,24 @@ class DocxExtractor:
     def _extract_sync(
         self,
         content: bytes,
+        file_name: str,
+    ) -> tuple[ExtractedBlock, ...]:
+        try:
+            return self._extract_sync_impl(content, file_name)
+        except UploadRejected:
+            raise
+        except Exception as error:
+            # python-docx/lxml can reject malformed XML after the initial ZIP
+            # guard. Keep parser failures inside the upload error contract so a
+            # hostile package cannot escape as an opaque API 500.
+            raise UploadRejected(
+                UploadErrorCode.INVALID_DOCUMENT,
+                "DOCX document is invalid",
+            ) from error
+
+    def _extract_sync_impl(
+        self,
+        content: bytes,
         _file_name: str,
     ) -> tuple[ExtractedBlock, ...]:
         try:

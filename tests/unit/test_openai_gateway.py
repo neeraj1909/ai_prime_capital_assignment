@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 from httpx import Request, Response
-from openai import APIStatusError, APITimeoutError
+from openai import APIStatusError, APITimeoutError, OpenAIError
 
 from ai_prime_capital.application.errors import AdapterError, AdapterErrorCode
 from ai_prime_capital.config import Settings
@@ -41,9 +41,23 @@ class FakeEmbeddings:
         return response
 
 
+class FakeModels:
+    def __init__(self, responses: Sequence[Any] = ()) -> None:
+        self._responses = list(responses)
+        self.calls: list[str] = []
+
+    async def retrieve(self, model: str) -> Any:
+        self.calls.append(model)
+        response = self._responses.pop(0) if self._responses else SimpleNamespace(id=model)
+        if isinstance(response, BaseException):
+            raise response
+        return response
+
+
 class FakeClient:
     def __init__(self, responses: Sequence[Any]) -> None:
         self.embeddings = FakeEmbeddings(responses)
+        self.models = FakeModels()
         self.closed = False
 
     async def close(self) -> None:
@@ -95,6 +109,34 @@ async def test_empty_input_is_a_noop() -> None:
     assert client.embeddings.calls == []
 
 
+async def test_ensure_available_checks_the_configured_embedding_model() -> None:
+    client = FakeClient(())
+    gateway = OpenAIEmbeddingGateway(build_settings(), client=client)  # type: ignore[arg-type]
+
+    await gateway.ensure_available()
+
+    assert client.models.calls == ["text-embedding-3-small"]
+
+
+async def test_ensure_available_translates_provider_auth_failure() -> None:
+    client = FakeClient(())
+    client.models = FakeModels(
+        (
+            APIStatusError(
+                "unauthorized",
+                response=Response(401, request=Request("GET", "https://api.openai.test")),
+                body={"error": "unauthorized"},
+            ),
+        )
+    )
+    gateway = OpenAIEmbeddingGateway(build_settings(), client=client)  # type: ignore[arg-type]
+
+    with pytest.raises(AdapterError) as error:
+        await gateway.ensure_available()
+
+    assert error.value.code is AdapterErrorCode.EMBEDDING_UPSTREAM
+
+
 async def test_blank_input_is_rejected_with_stable_application_error() -> None:
     gateway = OpenAIEmbeddingGateway(build_settings(), client=FakeClient(()))  # type: ignore[arg-type]
 
@@ -137,6 +179,16 @@ async def test_non_retryable_provider_error_is_translated_without_retry() -> Non
 
     assert error.value.code is AdapterErrorCode.EMBEDDING_UPSTREAM
     assert len(client.embeddings.calls) == 1
+
+
+async def test_unexpected_openai_error_is_translated_without_vendor_leak() -> None:
+    client = FakeClient((OpenAIError("provider response could not be decoded"),))
+    gateway = OpenAIEmbeddingGateway(build_settings(), client=client)  # type: ignore[arg-type]
+
+    with pytest.raises(AdapterError) as error:
+        await gateway.embed(("text",))
+
+    assert error.value.code is AdapterErrorCode.EMBEDDING_UPSTREAM
 
 
 async def test_invalid_provider_dimension_is_rejected() -> None:
