@@ -59,12 +59,20 @@ class Chunk:
     file_name: str
     text: str
     locator: SourceLocator
+    char_count: int | None = None
+    token_count: int | None = None
 
     def __post_init__(self) -> None:
         _require_non_blank(self.chunk_id, "chunk_id")
         _require_non_blank(self.document_id, "document_id")
         _require_non_blank(self.file_name, "file_name")
         _require_non_blank(self.text, "text")
+
+        if self.char_count is not None and self.char_count != len(self.text):
+            raise ValueError("char_count must match text length")
+
+        if self.token_count is not None and self.token_count < 1:
+            raise ValueError("token_count must be positive")
 
 
 @dataclass(frozen=True, slots=True)
