@@ -16,7 +16,10 @@ sys.modules[_SPEC.name] = _MODULE
 _SPEC.loader.exec_module(_MODULE)
 
 ContractFailure = _MODULE.ContractFailure
+Response = _MODULE.Response
 _multipart = _MODULE._multipart
+_require_document_id = _MODULE._require_document_id
+_safe_problem_summary = _MODULE._safe_problem_summary
 _validate_sources = _MODULE._validate_sources
 
 pytestmark = pytest.mark.unit
@@ -70,3 +73,42 @@ def test_source_validation_enforces_cross_format_evidence() -> None:
             expected_files={"facts.pdf", "notes.txt"},
             require_multiple_files=True,
         )
+
+
+def test_safe_problem_summary_reports_code_and_request_id_only() -> None:
+    response = Response(
+        503,
+        (
+            b'{"status":503,"title":"Dependency unavailable",'
+            b'"detail":"secret prompt content",'
+            b'"code":"embedding.upstream","request_id":"req-123"}'
+        ),
+    )
+
+    summary = _safe_problem_summary(response)
+
+    assert summary == "code=embedding.upstream, request_id=req-123"
+    assert "secret prompt content" not in summary
+
+
+def test_safe_problem_summary_ignores_malformed_or_unsafe_payloads() -> None:
+    malformed = Response(503, b"provider failure")
+    unsafe = Response(
+        503,
+        b'{"code":"embedding.upstream\nleak", "request_id":"req-123"}',
+    )
+
+    assert _safe_problem_summary(malformed) == ""
+    assert _safe_problem_summary(unsafe) == ""
+
+
+def test_document_identity_validation_accepts_content_addressed_ids() -> None:
+    value = "doc_" + "a" * 64
+
+    assert _require_document_id(value, "document_id") == value
+
+
+@pytest.mark.parametrize("value", ["", "   ", None, 42])
+def test_document_identity_validation_rejects_invalid_ids(value: object) -> None:
+    with pytest.raises(ContractFailure, match="document_id"):
+        _require_document_id(value, "document_id")
