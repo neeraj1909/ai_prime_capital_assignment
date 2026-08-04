@@ -38,6 +38,8 @@ class Settings(BaseSettings):
     # Explicit embedding hypothesis. Changing these changes vector identity.
     openai_embedding_model: str = "text-embedding-3-small"
     embedding_dimensions: int = Field(default=1536, gt=0)
+    embedding_batch_size: int = Field(default=64, ge=1, le=256)
+    embedding_max_retries: int = Field(default=2, ge=0, le=5)
     openai_timeout_seconds: float = Field(
         default=30.0,
         gt=0,
