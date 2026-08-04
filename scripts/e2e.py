@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import time
 from dataclasses import dataclass
@@ -43,6 +44,30 @@ class Response:
             raise ContractFailure("API returned a non-JSON response") from exc
 
 
+_SAFE_ERROR_TOKEN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
+
+
+def _safe_problem_summary(response: Response) -> str:
+    """Return stable, non-sensitive fields from an RFC 9457-style error."""
+
+    if not response.body:
+        return ""
+
+    try:
+        payload = json.loads(response.body)
+    except (UnicodeDecodeError, json.JSONDecodeError, TypeError):
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+
+    fields: list[str] = []
+    for field in ("code", "request_id"):
+        value = payload.get(field)
+        if isinstance(value, str) and _SAFE_ERROR_TOKEN.fullmatch(value):
+            fields.append(f"{field}={value}")
+    return ", ".join(fields)
+
+
 def _multipart(
     files: tuple[tuple[str, str, str, bytes], ...],
 ) -> tuple[bytes, str]:
@@ -76,6 +101,20 @@ def _require_uuid(value: Any, field: str) -> str:
     return value
 
 
+def _require_document_id(value: Any, field: str = "document_id") -> str:
+    """Validate the API's opaque, stable document identity.
+
+    Document identities are content-addressed (``doc_<sha256>``) by the
+    domain layer, rather than UUIDs.  Keep this check intentionally opaque so
+    the E2E runner validates the public contract without coupling itself to a
+    particular identity encoding.
+    """
+
+    if not isinstance(value, str) or not value.strip() or value != value.strip():
+        raise ContractFailure(f"{field} is missing")
+    return value
+
+
 def _validate_sources(
     payload: dict[str, Any],
     *,
@@ -93,7 +132,7 @@ def _validate_sources(
     file_names: set[str] = set()
     for source in sources:
         source_map = _require_mapping(source, "source is not an object")
-        _require_uuid(source_map.get("document_id"), "document_id")
+        _require_document_id(source_map.get("document_id"))
         _require_uuid(source_map.get("chunk_id"), "chunk_id")
         file_name = source_map.get("file_name")
         snippet = source_map.get("snippet")
@@ -145,10 +184,13 @@ class ContractRunner:
             with urlopen(request, timeout=self.timeout) as response:
                 return Response(response.status, response.read())
         except HTTPError as exc:
-            # Consume the body so the connection can close cleanly, but never
-            # include it in failure output: it may contain user-controlled data.
-            exc.read()
-            return Response(exc.code, b"")
+            # Retain the bounded body for structured, redacted diagnostics. Never
+            # print the raw body: it may contain user-controlled data.
+            try:
+                body = exc.read(16_384)
+            finally:
+                exc.close()
+            return Response(exc.code, body)
         except (TimeoutError, URLError, OSError) as exc:
             raise TransportFailure(f"{method} {path} could not reach the API") from exc
 
@@ -212,7 +254,9 @@ class ContractRunner:
         body, content_type = _multipart(self._sample_parts())
         response = self.request("POST", "/api/v1/documents", body=body, content_type=content_type)
         if response.status != 201:
-            raise ContractFailure(f"{label} returned unexpected status {response.status}")
+            summary = _safe_problem_summary(response)
+            suffix = f" ({summary})" if summary else ""
+            raise ContractFailure(f"{label} returned unexpected status {response.status}{suffix}")
         payload = _require_mapping(response.json(), f"{label} response is invalid")
         documents = payload.get("documents")
         if not isinstance(documents, list) or len(documents) != len(SAMPLE_MEDIA_TYPES):
@@ -220,7 +264,7 @@ class ContractRunner:
         ids: list[str] = []
         for document in documents:
             document_map = _require_mapping(document, f"{label} document is invalid")
-            ids.append(_require_uuid(document_map.get("document_id"), "document_id"))
+            ids.append(_require_document_id(document_map.get("document_id")))
             if document_map.get("file_name") not in SAMPLE_MEDIA_TYPES:
                 raise ContractFailure(f"{label} returned an unexpected file")
             if document_map.get("status") != "indexed" or not isinstance(
@@ -301,7 +345,7 @@ class ContractRunner:
             if not isinstance(ids, list) or len(ids) != len(SAMPLE_MEDIA_TYPES):
                 raise ContractFailure("E2E state file has no document identities")
             for document_id in ids:
-                _require_uuid(document_id, "document_id")
+                _require_document_id(document_id)
             self.passed("upload.verify_existing", "no re-upload")
         else:
             first_ids = self.upload_samples(label="upload.initial")
