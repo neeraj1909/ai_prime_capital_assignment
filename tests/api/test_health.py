@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import json
+import logging
+from collections.abc import Iterator
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -15,11 +19,12 @@ from ai_prime_capital.main import create_app
 pytestmark = pytest.mark.api
 
 
-def build_settings() -> Settings:
+def build_settings(**overrides: object) -> Settings:
     return Settings(
         _env_file=None,
         openai_api_key="test-secret",
         openai_chat_model="test-chat-model",
+        **overrides,
     )
 
 
@@ -137,4 +142,59 @@ def test_content_length_limit_rejects_large_requests_before_route_parsing() -> N
 
     assert response.status_code == 413
     assert response.headers["content-type"].startswith("application/problem+json")
+    assert response.headers["connection"] == "close"
     assert response.json()["code"] == "request.body_too_large"
+
+
+def test_streamed_body_without_content_length_is_still_bounded() -> None:
+    settings = build_settings(max_file_bytes=16, max_request_bytes=16)
+    app = create_app(settings=settings, factory=RecordingFactory(ready=True))
+
+    def body_chunks() -> Iterator[bytes]:
+        yield b'{"question":"'
+        yield b"x" * 32
+        yield b'"}'
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/questions",
+            content=body_chunks(),
+            headers={
+                "Content-Type": "application/json",
+                "Transfer-Encoding": "chunked",
+            },
+        )
+
+    assert response.status_code == 413
+    assert response.json()["code"] == "request.body_too_large"
+
+
+def test_max_length_json_escaped_question_is_not_rejected_by_transport_limit() -> None:
+    settings = build_settings()
+    app = create_app(settings=settings, factory=RecordingFactory(ready=True))
+    body = json.dumps({"question": "😀" * settings.max_question_chars}).encode()
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/questions",
+            content=body,
+            headers={"Content-Type": "application/json"},
+        )
+
+    assert response.status_code == 503
+    assert response.json()["code"] == "vector.unavailable"
+
+
+def test_configured_log_level_is_applied_at_startup() -> None:
+    logger = logging.getLogger("ai_prime_capital")
+    previous_level = logger.level
+    app = create_app(
+        settings=build_settings(log_level="ERROR"),
+        factory=RecordingFactory(ready=True),
+    )
+
+    try:
+        with TestClient(app):
+            assert logger.getEffectiveLevel() == logging.ERROR
+    finally:
+        logger.setLevel(previous_level)

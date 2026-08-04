@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 
 from ..application.errors import AdapterError, AdapterErrorCode
 from ..infrastructure.extractors.base import UploadErrorCode, UploadRejected
-from ..observability import get_request_id
+from ..observability import RequestBodyTooLarge, get_request_id
 from .schemas import ProblemDetails
 
 LOGGER = logging.getLogger("ai_prime_capital.api")
@@ -131,6 +131,14 @@ async def handle_validation_error(request: Request, exc: Exception) -> JSONRespo
 async def handle_http_exception(request: Request, exc: Exception) -> JSONResponse:
     if not isinstance(exc, HTTPException):
         return await handle_unexpected_error(request, exc)
+    if isinstance(exc, RequestBodyTooLarge):
+        return _problem(
+            request,
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            title="Request exceeds limits",
+            detail="The request body exceeds the configured limit.",
+            code="request.body_too_large",
+        )
     status_code = exc.status_code if 400 <= exc.status_code <= 599 else 500
     return _problem(
         request,

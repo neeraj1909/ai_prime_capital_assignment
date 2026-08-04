@@ -169,3 +169,16 @@ def problem_response_spec(example: dict[str, object]) -> dict[str, object]:
             }
         },
     }
+
+
+def problem_response_examples(
+    examples: dict[str, dict[str, object]],
+) -> dict[str, object]:
+    return {
+        "model": ProblemDetails,
+        "content": {
+            "application/problem+json": {
+                "examples": {name: {"value": example} for name, example in examples.items()},
+            }
+        },
+    }

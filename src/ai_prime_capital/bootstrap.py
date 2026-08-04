@@ -163,6 +163,8 @@ async def _initialize_resources(
             reason="configuration is invalid",
         )
 
+    logging.getLogger("ai_prime_capital").setLevel(resolved_settings.log_level)
+
     try:
         return await factory(resolved_settings)
     except ResourceInitializationError:

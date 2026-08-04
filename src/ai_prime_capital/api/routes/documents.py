@@ -11,6 +11,7 @@ from ..schemas import (
     DOCUMENT_UPLOAD_EXAMPLE,
     PROBLEM_EXAMPLE,
     DocumentUploadResponse,
+    problem_response_examples,
     problem_response_spec,
 )
 
@@ -28,8 +29,25 @@ router = APIRouter(prefix="/api/v1", tags=["documents"])
             "description": "Documents were validated, extracted, embedded, and indexed.",
             "content": {"application/json": {"example": DOCUMENT_UPLOAD_EXAMPLE}},
         },
-        413: problem_response_spec(
-            PROBLEM_EXAMPLE | {"status": 413, "code": "upload.file_too_large"}
+        413: problem_response_examples(
+            {
+                "request_body_too_large": {
+                    **PROBLEM_EXAMPLE,
+                    "status": 413,
+                    "title": "Request exceeds limits",
+                    "detail": "The request body exceeds the configured limit.",
+                    "instance": "/api/v1/documents",
+                    "code": "request.body_too_large",
+                },
+                "uploaded_file_too_large": {
+                    **PROBLEM_EXAMPLE,
+                    "status": 413,
+                    "title": "Upload exceeds limits",
+                    "detail": "The uploaded content exceeds the configured limits.",
+                    "instance": "/api/v1/documents",
+                    "code": "upload.file_too_large",
+                },
+            }
         ),
         415: problem_response_spec(
             PROBLEM_EXAMPLE | {"status": 415, "code": "upload.unsupported_type"}

@@ -244,6 +244,14 @@ def test_openapi_and_docs_expose_public_contract_examples() -> None:
     paths = openapi.json()["paths"]
     assert "/api/v1/documents" in paths
     assert "/api/v1/questions" in paths
+    document_post = paths["/api/v1/documents"]["post"]
+    document_413_examples = document_post["responses"]["413"]["content"][
+        "application/problem+json"
+    ]["examples"]
+    assert {example["value"]["code"] for example in document_413_examples.values()} == {
+        "request.body_too_large",
+        "upload.file_too_large",
+    }
     question_post = paths["/api/v1/questions"]["post"]
     examples = question_post["responses"]["200"]["content"]["application/json"]["examples"]
     assert examples["grounded"]["value"]["grounded"] is True
@@ -252,6 +260,10 @@ def test_openapi_and_docs_expose_public_contract_examples() -> None:
     assert (
         question_post["responses"]["422"]["content"]["application/problem+json"]["example"]["code"]
         == "request.invalid"
+    )
+    assert (
+        question_post["responses"]["413"]["content"]["application/problem+json"]["example"]["code"]
+        == "request.body_too_large"
     )
     ProblemDetails.model_validate(
         question_post["responses"]["422"]["content"]["application/problem+json"]["example"]

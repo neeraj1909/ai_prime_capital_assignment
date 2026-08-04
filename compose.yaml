@@ -10,8 +10,7 @@ services:
     restart: unless-stopped
     init: true
     env_file:
-      - path: .env
-        required: false
+      - .env
     environment:
       QDRANT_URL: "http://qdrant:6333"
       QDRANT_COLLECTION: "${QDRANT_COLLECTION:-ai_prime_capital_documents}"

@@ -10,9 +10,10 @@ answer.
 The local foundation, ingestion pipeline, retrieval/evidence gate, structured
 answer adapter, citation validation, API contract, sample corpus, offline
 evaluation, pinned container build, health-gated Compose deployment, and real
-Qdrant integration gate are implemented. The live E2E runner reaches the
-deployed API but the supplied OpenAI credential currently returns `401`, so no
-live answer-quality claim is made.
+Qdrant integration gate are implemented. The final rebuilt Compose deployment
+passes the live OpenAI/Qdrant E2E flow, including all-format upload,
+idempotent re-upload, grounded single- and cross-document answers, exact
+no-answer behavior, rejection contracts, and post-restart persistence.
 
 ## Architecture
 
@@ -125,8 +126,9 @@ If `/health/ready` returns `503`, inspect its problem response: the usual
 causes are a missing `OPENAI_API_KEY`, an unavailable Qdrant URL, or a vector
 collection whose dimensions/metric do not match the configured embedding
 model. Liveness and OpenAPI remain useful for diagnosing those cases. The
-Compose API health check remains unhealthy until Qdrant compatibility succeeds;
-it never recreates an incompatible collection.
+Compose API health check remains unhealthy until the configured OpenAI models
+are accessible and Qdrant compatibility succeeds; it never recreates an
+incompatible collection.
 
 ## Docker deployment and E2E
 

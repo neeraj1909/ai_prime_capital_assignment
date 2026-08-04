@@ -33,6 +33,15 @@ router = APIRouter(prefix="/api/v1", tags=["questions"])
                 }
             },
         },
+        413: problem_response_spec(
+            PROBLEM_EXAMPLE
+            | {
+                "status": 413,
+                "title": "Request exceeds limits",
+                "detail": "The request body exceeds the configured limit.",
+                "code": "request.body_too_large",
+            }
+        ),
         422: problem_response_spec(PROBLEM_EXAMPLE),
         502: problem_response_spec(
             PROBLEM_EXAMPLE
