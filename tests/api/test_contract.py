@@ -6,6 +6,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from ai_prime_capital.api.schemas import AnswerResponse, ProblemDetails
 from ai_prime_capital.application.errors import AdapterError, AdapterErrorCode
 from ai_prime_capital.application.ingest_documents import (
     IndexedDocument,
@@ -246,9 +247,14 @@ def test_openapi_and_docs_expose_public_contract_examples() -> None:
     question_post = paths["/api/v1/questions"]["post"]
     examples = question_post["responses"]["200"]["content"]["application/json"]["examples"]
     assert examples["grounded"]["value"]["grounded"] is True
+    AnswerResponse.model_validate(examples["grounded"]["value"])
+    AnswerResponse.model_validate(examples["no_relevant_information"]["value"])
     assert (
         question_post["responses"]["422"]["content"]["application/problem+json"]["example"]["code"]
         == "request.invalid"
+    )
+    ProblemDetails.model_validate(
+        question_post["responses"]["422"]["content"]["application/problem+json"]["example"]
     )
 
 

@@ -1,0 +1,23 @@
+.git
+.gitignore
+.env
+.venv
+__pycache__
+*.py[cod]
+.coverage
+.pytest_cache
+.mypy_cache
+.ruff_cache
+htmlcov
+build
+dist
+*.egg-info
+qdrant_storage
+AI Developer Technical Assessment.docx
+docs
+samples
+tests
+scripts
+README.md
+uv.lock
+pyproject.toml
