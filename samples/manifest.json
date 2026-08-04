@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "documents": [
+    {
+      "file": "facts.pdf",
+      "media_type": "application/pdf",
+      "sha256": "c1610b572737b99efed55b0388a66ba97ab1b2ee1080dcc46cec3711425ba31a",
+      "facts": [
+        "Annual revenue increased by 12 percent in fiscal year 2024, driven by enterprise sales."
+      ],
+      "expected_locator": {
+        "page_number": 1
+      }
+    },
+    {
+      "file": "policy.docx",
+      "media_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "sha256": "759a322ea9eeb77b66c2d17c597bdb49684f66a1d0538994b3b4039887593757",
+      "facts": [
+        "Customers may return unopened products within 30 days of delivery."
+      ],
+      "expected_locator": {
+        "paragraph_index": 0
+      }
+    },
+    {
+      "file": "notes.txt",
+      "media_type": "text/plain",
+      "sha256": "92ccf50402bbf97a2aa37ef972f8dd10f266843bdef5d6f011b0c4e599150281",
+      "facts": [
+        "The investment policy expires on December 31, 2027.",
+        "Capital reserves are reported as 10 million dollars."
+      ],
+      "expected_locator": {
+        "start_offset": 0
+      }
+    }
+  ],
+  "absent_facts": [
+    "moonshot office",
+    "Antarctica headcount"
+  ]
+}
