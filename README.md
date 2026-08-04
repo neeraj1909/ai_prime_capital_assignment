@@ -12,8 +12,9 @@ answer adapter, citation validation, API contract, sample corpus, offline
 evaluation, pinned container build, health-gated Compose deployment, and real
 Qdrant integration gate are implemented. The final rebuilt Compose deployment
 passes the live OpenAI/Qdrant E2E flow, including all-format upload,
-idempotent re-upload, grounded single- and cross-document answers, exact
-no-answer behavior, rejection contracts, and post-restart persistence.
+stable content-addressed identities on repeated upload, grounded single- and
+cross-document answers, exact no-answer behavior, rejection contracts, and
+post-restart persistence.
 
 ## Architecture
 
@@ -39,10 +40,11 @@ no-answer behavior, rejection contracts, and post-restart persistence.
 Composition root: config.py + bootstrap.py + main.py
 ```
 
-Dependencies point inward: the API and infrastructure depend on the application
-contracts and domain types; the application does not import FastAPI, OpenAI, or
-Qdrant. Vendor SDK objects and transport models therefore stop at their adapter
-boundaries.
+Core dependencies point inward: the API and infrastructure depend on the
+application contracts and domain types; the application does not import
+FastAPI, OpenAI, or Qdrant. Provider SDK clients and response objects stop at
+their infrastructure adapters. A narrow upload DTO and error taxonomy are
+shared between the HTTP and extraction boundaries.
 
 | Area | Responsibility | Deliberately excluded |
 |---|---|---|
@@ -62,9 +64,13 @@ multipart upload
   -> extract text with provenance
   -> create deterministic token-bounded chunks and IDs
   -> request embeddings
-  -> idempotently upsert named vectors and payloads into Qdrant
+  -> upsert deterministic point IDs, named vectors, and payloads into Qdrant
   -> return stable document IDs and chunk counts
 ```
+
+Repeating identical content preserves document IDs and final Qdrant point
+cardinality. It still repeats extraction, embedding, and upsert work; the API
+does not claim exactly-once processing or zero-cost retries.
 
 Question answering has an explicit evidence gate before generation:
 
@@ -82,7 +88,10 @@ This separation keeps the highest-risk rules—threshold qualification, the
 no-answer decision, citation membership, and returned provenance—deterministic
 and testable outside the model. `bootstrap.py` creates shared adapters once per
 FastAPI lifespan; readiness stays false when provider access or the Qdrant
-collection contract is unavailable or incompatible.
+collection contract is unavailable or incompatible. A transient dependency
+initialization failure is retried in the background while liveness remains
+available and readiness remains `503`; readiness switches to `200` only after
+the complete resource factory succeeds.
 
 ## Technology choices
 

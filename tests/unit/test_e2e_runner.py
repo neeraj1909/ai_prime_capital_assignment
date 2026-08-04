@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
 
@@ -16,6 +17,7 @@ sys.modules[_SPEC.name] = _MODULE
 _SPEC.loader.exec_module(_MODULE)
 
 ContractFailure = _MODULE.ContractFailure
+ContractRunner = _MODULE.ContractRunner
 Response = _MODULE.Response
 _multipart = _MODULE._multipart
 _require_document_id = _MODULE._require_document_id
@@ -73,6 +75,103 @@ def test_source_validation_enforces_cross_format_evidence() -> None:
             expected_files={"facts.pdf", "notes.txt"},
             require_multiple_files=True,
         )
+
+
+def test_source_validation_rejects_cross_wired_file_identity() -> None:
+    payload = {
+        "answer": "Revenue increased by 12 percent.",
+        "grounded": True,
+        "sources": [_source()],
+    }
+
+    with pytest.raises(ContractFailure, match="persisted document identities"):
+        _validate_sources(
+            payload,
+            expected_files={"facts.pdf"},
+            expected_documents={"facts.pdf": "doc_saved_identity"},
+        )
+
+
+def test_source_validation_requires_expected_answer_concepts() -> None:
+    payload = {
+        "answer": "Revenue increased.",
+        "grounded": True,
+        "sources": [_source()],
+    }
+
+    with pytest.raises(ContractFailure, match="expected fact"):
+        _validate_sources(
+            payload,
+            expected_files={"facts.pdf"},
+            expected_answer_concepts=(("12 percent", "12%"),),
+        )
+
+
+def test_source_validation_rejects_answer_fact_missing_from_evidence() -> None:
+    source = {**_source(), "snippet": "Revenue information is unavailable."}
+    payload = {
+        "answer": "Revenue increased by 12 percent in 2024.",
+        "grounded": True,
+        "sources": [source],
+    }
+
+    with pytest.raises(ContractFailure, match="source evidence"):
+        _validate_sources(
+            payload,
+            expected_files={"facts.pdf"},
+            expected_documents={"facts.pdf": source["document_id"]},
+            expected_evidence_concepts={
+                "facts.pdf": (("12 percent", "12%"), ("2024",)),
+            },
+        )
+
+
+def test_source_validation_accepts_expected_facts_and_persisted_identity() -> None:
+    source = _source()
+    source["snippet"] = "Annual revenue increased by 12 percent during 2024."
+    payload = {
+        "answer": "Revenue increased by 12% during 2024.",
+        "grounded": True,
+        "sources": [source],
+    }
+
+    assert _validate_sources(
+        payload,
+        expected_files={"facts.pdf"},
+        expected_documents={"facts.pdf": source["document_id"]},
+        expected_answer_concepts=(("12 percent", "12%"), ("2024",)),
+        expected_evidence_concepts={
+            "facts.pdf": (("12 percent", "12%"), ("2024",)),
+        },
+    ) == {"facts.pdf"}
+
+
+def test_upload_validation_rejects_duplicate_files_and_invalid_chunk_count(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    runner = ContractRunner(base_url="http://test", timeout=1, state_file=tmp_path / "state")
+    duplicate = {
+        "documents": [
+            {
+                "document_id": f"doc-{index}",
+                "file_name": "facts.pdf",
+                "media_type": "application/pdf",
+                "status": "indexed",
+                "chunk_count": True,
+            }
+            for index in range(3)
+        ]
+    }
+    monkeypatch.setattr(
+        runner,
+        "request",
+        lambda *_args, **_kwargs: Response(201, json.dumps(duplicate).encode()),
+    )
+    monkeypatch.setattr(runner, "_sample_parts", lambda: ())
+
+    with pytest.raises(ContractFailure, match=r"invalid index result|duplicate"):
+        runner.upload_samples(label="upload.test")
 
 
 def test_safe_problem_summary_reports_code_and_request_id_only() -> None:

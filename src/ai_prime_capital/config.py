@@ -13,8 +13,6 @@ from pydantic import (
 )
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# Luna Max
-
 MIB = 1024 * 1024
 
 
@@ -114,7 +112,7 @@ class Settings(BaseSettings):
         secret = value.get_secret_value()
 
         if not secret or secret != secret.strip():
-            raise ValueError("must be non-empty and have no surrounding whiespaces")
+            raise ValueError("must be non-empty and have no surrounding whitespace")
 
         return value
 

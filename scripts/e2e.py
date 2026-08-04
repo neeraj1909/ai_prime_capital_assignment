@@ -115,24 +115,45 @@ def _require_document_id(value: Any, field: str = "document_id") -> str:
     return value
 
 
+def _normalized_text(value: str) -> str:
+    return re.sub(r"[^a-z0-9%]+", " ", value.casefold()).strip()
+
+
+def _contains_concept(text: str, alternatives: tuple[str, ...]) -> bool:
+    normalized_text = f" {_normalized_text(text)} "
+    normalized_alternatives = tuple(_normalized_text(value) for value in alternatives)
+    return bool(normalized_alternatives) and any(
+        alternative and f" {alternative} " in normalized_text
+        for alternative in normalized_alternatives
+    )
+
+
 def _validate_sources(
     payload: dict[str, Any],
     *,
     expected_files: set[str],
     require_multiple_files: bool = False,
+    expected_documents: dict[str, str] | None = None,
+    expected_answer_concepts: tuple[tuple[str, ...], ...] = (),
+    expected_evidence_concepts: dict[str, tuple[tuple[str, ...], ...]] | None = None,
 ) -> set[str]:
     if payload.get("grounded") is not True:
         raise ContractFailure("answerable response is not grounded")
     if not isinstance(payload.get("answer"), str) or not payload["answer"].strip():
         raise ContractFailure("answerable response has no answer")
+    for alternatives in expected_answer_concepts:
+        if not _contains_concept(payload["answer"], alternatives):
+            raise ContractFailure("answerable response is missing an expected fact")
+
     sources = payload.get("sources")
     if not isinstance(sources, list) or not sources:
         raise ContractFailure("grounded response has no sources")
 
     file_names: set[str] = set()
+    snippets_by_file: dict[str, list[str]] = {}
     for source in sources:
         source_map = _require_mapping(source, "source is not an object")
-        _require_document_id(source_map.get("document_id"))
+        document_id = _require_document_id(source_map.get("document_id"))
         _require_uuid(source_map.get("chunk_id"), "chunk_id")
         file_name = source_map.get("file_name")
         snippet = source_map.get("snippet")
@@ -148,12 +169,19 @@ def _validate_sources(
             raise ContractFailure("source locator is empty")
         if not isinstance(score, (int, float)) or isinstance(score, bool):
             raise ContractFailure("source score is invalid")
+        if expected_documents is not None and expected_documents.get(file_name) != document_id:
+            raise ContractFailure("sources do not match the persisted document identities")
         file_names.add(file_name)
+        snippets_by_file.setdefault(file_name, []).append(snippet)
 
-    if not file_names & expected_files:
+    if not file_names or not file_names <= expected_files:
         raise ContractFailure("sources do not identify an expected sample")
     if require_multiple_files and len(file_names & expected_files) < 2:
         raise ContractFailure("cross-format answer did not cite multiple samples")
+    for file_name, concept_groups in (expected_evidence_concepts or {}).items():
+        evidence = " ".join(snippets_by_file.get(file_name, ()))
+        if any(not _contains_concept(evidence, alternatives) for alternatives in concept_groups):
+            raise ContractFailure("source evidence is missing an expected fact")
     return file_names
 
 
@@ -250,7 +278,7 @@ class ContractRunner:
             parts.append(("files", name, media_type, path.read_bytes()))
         return tuple(parts)
 
-    def upload_samples(self, *, label: str) -> tuple[str, ...]:
+    def upload_samples(self, *, label: str) -> dict[str, str]:
         body, content_type = _multipart(self._sample_parts())
         response = self.request("POST", "/api/v1/documents", body=body, content_type=content_type)
         if response.status != 201:
@@ -261,18 +289,29 @@ class ContractRunner:
         documents = payload.get("documents")
         if not isinstance(documents, list) or len(documents) != len(SAMPLE_MEDIA_TYPES):
             raise ContractFailure(f"{label} returned an invalid document count")
-        ids: list[str] = []
+        indexed_documents: dict[str, str] = {}
         for document in documents:
             document_map = _require_mapping(document, f"{label} document is invalid")
-            ids.append(_require_document_id(document_map.get("document_id")))
-            if document_map.get("file_name") not in SAMPLE_MEDIA_TYPES:
+            document_id = _require_document_id(document_map.get("document_id"))
+            file_name = document_map.get("file_name")
+            if not isinstance(file_name, str) or file_name not in SAMPLE_MEDIA_TYPES:
                 raise ContractFailure(f"{label} returned an unexpected file")
-            if document_map.get("status") != "indexed" or not isinstance(
-                document_map.get("chunk_count"), int
+            if file_name in indexed_documents:
+                raise ContractFailure(f"{label} returned a duplicate file")
+            chunk_count = document_map.get("chunk_count")
+            if (
+                document_map.get("media_type") != SAMPLE_MEDIA_TYPES[file_name]
+                or document_map.get("status") != "indexed"
+                or not isinstance(chunk_count, int)
+                or isinstance(chunk_count, bool)
+                or chunk_count < 1
             ):
                 raise ContractFailure(f"{label} returned an invalid index result")
-        self.passed(label, f"{len(ids)} documents")
-        return tuple(ids)
+            indexed_documents[file_name] = document_id
+        if set(indexed_documents) != set(SAMPLE_MEDIA_TYPES):
+            raise ContractFailure(f"{label} did not return every sample")
+        self.passed(label, f"{len(indexed_documents)} documents")
+        return indexed_documents
 
     def answer(self, question: str) -> dict[str, Any]:
         body = json.dumps({"question": question, "top_k": 5}).encode()
@@ -286,9 +325,17 @@ class ContractRunner:
             raise ContractFailure(f"question returned unexpected status {response.status}")
         return _require_mapping(response.json(), "question response is invalid")
 
-    def verify_positive_questions(self) -> None:
+    def verify_positive_questions(self, *, expected_documents: dict[str, str]) -> None:
         revenue = self.answer("What revenue increase is documented?")
-        _validate_sources(revenue, expected_files={"facts.pdf"})
+        _validate_sources(
+            revenue,
+            expected_files={"facts.pdf"},
+            expected_documents=expected_documents,
+            expected_answer_concepts=(("12 percent", "12%"), ("2024",)),
+            expected_evidence_concepts={
+                "facts.pdf": (("12 percent", "12%"), ("2024",)),
+            },
+        )
         self.passed("question.revenue", "grounded")
 
         cross_format = self.answer(
@@ -298,6 +345,15 @@ class ContractRunner:
             cross_format,
             expected_files={"notes.txt", "policy.docx"},
             require_multiple_files=True,
+            expected_documents=expected_documents,
+            expected_answer_concepts=(
+                ("December 31 2027", "31 December 2027", "2027 12 31"),
+                ("30 days", "30 day"),
+            ),
+            expected_evidence_concepts={
+                "notes.txt": (("December 31 2027", "31 December 2027", "2027 12 31"),),
+                "policy.docx": (("30 days", "30 day"),),
+            },
         )
         self.passed("question.cross_format", "multiple sources")
 
@@ -341,11 +397,15 @@ class ContractRunner:
                 json.loads(self.state_file.read_text(encoding="utf-8")),
                 "E2E state file is invalid",
             )
-            ids = state.get("document_ids")
-            if not isinstance(ids, list) or len(ids) != len(SAMPLE_MEDIA_TYPES):
+            documents = state.get("documents")
+            if not isinstance(documents, dict) or set(documents) != set(SAMPLE_MEDIA_TYPES):
                 raise ContractFailure("E2E state file has no document identities")
-            for document_id in ids:
+            indexed_documents: dict[str, str] = {}
+            for file_name, document_id in documents.items():
+                if not isinstance(file_name, str):
+                    raise ContractFailure("E2E state file has an invalid file name")
                 _require_document_id(document_id)
+                indexed_documents[file_name] = document_id
             self.passed("upload.verify_existing", "no re-upload")
         else:
             first_ids = self.upload_samples(label="upload.initial")
@@ -354,12 +414,13 @@ class ContractRunner:
                 raise ContractFailure("repeat upload changed document identities")
             self.state_file.parent.mkdir(parents=True, exist_ok=True)
             self.state_file.write_text(
-                json.dumps({"document_ids": list(first_ids)}, indent=2) + "\n",
+                json.dumps({"documents": first_ids}, indent=2, sort_keys=True) + "\n",
                 encoding="utf-8",
             )
+            indexed_documents = first_ids
             self.passed("upload.idempotent", "stable document identities")
 
-        self.verify_positive_questions()
+        self.verify_positive_questions(expected_documents=indexed_documents)
         self.verify_no_answer()
         self.verify_upload_rejections()
 

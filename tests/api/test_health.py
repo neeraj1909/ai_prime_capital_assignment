@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import threading
+import time
 from collections.abc import Iterator
 
 import pytest
 from fastapi.testclient import TestClient
 
+import ai_prime_capital.bootstrap as bootstrap
 from ai_prime_capital.api.dependencies import get_resources
 from ai_prime_capital.bootstrap import (
     Readiness,
@@ -59,6 +63,27 @@ class FailingFactory:
         raise ResourceInitializationError("test dependency unavailable")
 
 
+class RecoveringFactory:
+    def __init__(self, *, unexpected_retry_failure: bool = False) -> None:
+        self.create_count = 0
+        self.closer = RecordingCloser()
+        self.allow_retry = threading.Event()
+        self.unexpected_retry_failure = unexpected_retry_failure
+
+    async def __call__(self, settings: Settings) -> RuntimeResources:
+        self.create_count += 1
+        if self.create_count == 1:
+            raise ResourceInitializationError("transient dependency failure")
+        await asyncio.to_thread(self.allow_retry.wait)
+        if self.unexpected_retry_failure and self.create_count == 2:
+            raise RuntimeError("unexpected retry failure")
+        return RuntimeResources(
+            settings=settings,
+            readiness=Readiness(ready=True),
+            closers=(self.closer,),
+        )
+
+
 def test_lifespan_creates_and_closes_resources() -> None:
     factory = RecordingFactory(ready=True)
     app = create_app(settings=build_settings(), factory=factory)
@@ -99,6 +124,51 @@ def test_initialization_failure_keeps_liveness_and_marks_not_ready() -> None:
     with TestClient(app) as client:
         assert client.get("/health/live").status_code == 200
         assert client.get("/health/ready").status_code == 503
+
+
+def test_initialization_retries_and_recovers_after_transient_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(bootstrap, "_RESOURCE_RETRY_INTERVAL_SECONDS", 0.01, raising=False)
+    factory = RecoveringFactory()
+    app = create_app(settings=build_settings(), factory=factory)
+
+    with TestClient(app) as client:
+        assert client.get("/health/ready").status_code == 503
+        factory.allow_retry.set()
+        deadline = time.monotonic() + 1
+        response = client.get("/health/ready")
+        while response.status_code != 200 and time.monotonic() < deadline:
+            time.sleep(0.01)
+            response = client.get("/health/ready")
+
+        assert response.status_code == 200
+        assert response.json() == {"status": "ready"}
+        assert factory.create_count == 2
+
+    assert factory.closer.close_count == 1
+
+
+def test_initialization_retry_survives_unexpected_factory_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(bootstrap, "_RESOURCE_RETRY_INTERVAL_SECONDS", 0.01, raising=False)
+    factory = RecoveringFactory(unexpected_retry_failure=True)
+    app = create_app(settings=build_settings(), factory=factory)
+
+    with TestClient(app) as client:
+        assert client.get("/health/ready").status_code == 503
+        factory.allow_retry.set()
+        deadline = time.monotonic() + 1
+        response = client.get("/health/ready")
+        while response.status_code != 200 and time.monotonic() < deadline:
+            time.sleep(0.01)
+            response = client.get("/health/ready")
+
+        assert response.status_code == 200
+        assert factory.create_count == 3
+
+    assert factory.closer.close_count == 1
 
 
 def test_dependency_override_is_supported() -> None:

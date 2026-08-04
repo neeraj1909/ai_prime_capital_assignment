@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
@@ -27,6 +28,7 @@ from .infrastructure.openai_gateway import OpenAIAnswerGateway, OpenAIEmbeddingG
 from .infrastructure.qdrant_store import QdrantVectorStore
 
 LOGGER = logging.getLogger(__name__)
+_RESOURCE_RETRY_INTERVAL_SECONDS = 5.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -174,6 +176,40 @@ async def _initialize_resources(
         )
 
 
+async def _retry_dependency_initialization(
+    app: FastAPI,
+    *,
+    settings: Settings,
+    factory: ResourceFactory,
+    stop: asyncio.Event,
+) -> None:
+    while not stop.is_set():
+        try:
+            await asyncio.wait_for(
+                stop.wait(),
+                timeout=_RESOURCE_RETRY_INTERVAL_SECONDS,
+            )
+            return
+        except TimeoutError:
+            pass
+
+        try:
+            replacement = await _initialize_resources(settings, factory)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            LOGGER.warning("resource_initialization_retry_failed")
+            continue
+        if replacement.readiness.ready:
+            previous = cast(RuntimeResources, app.state.resources)
+            app.state.resources = replacement
+            await previous.close()
+            LOGGER.info("resource_initialization_recovered")
+            return
+        LOGGER.warning("resource_initialization_retry_unavailable")
+        await replacement.close()
+
+
 def make_lifespan(
     *,
     settings: Settings | None,
@@ -183,10 +219,29 @@ def make_lifespan(
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         resources = await _initialize_resources(settings, factory)
         app.state.resources = resources
+        stop_retry = asyncio.Event()
+        retry_task: asyncio.Task[None] | None = None
+        if (
+            resources.settings is not None
+            and resources.readiness.reason == "required dependencies are unavailable"
+        ):
+            retry_task = asyncio.create_task(
+                _retry_dependency_initialization(
+                    app,
+                    settings=resources.settings,
+                    factory=factory,
+                    stop=stop_retry,
+                ),
+                name="dependency-initialization-retry",
+            )
 
         try:
             yield
         finally:
-            await resources.close()
+            stop_retry.set()
+            if retry_task is not None:
+                await retry_task
+            current_resources = cast(RuntimeResources, app.state.resources)
+            await current_resources.close()
 
     return lifespan
