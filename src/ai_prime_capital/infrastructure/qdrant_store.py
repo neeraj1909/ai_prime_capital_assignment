@@ -158,27 +158,33 @@ class QdrantVectorStore(VectorStorePort):
                 AdapterErrorCode.VECTOR_INVALID_INPUT,
                 "search limit must be positive",
             )
-        
+
         effective_limit = min(limit, self._settings.retrieval_top_k)
-        
-        values = tuple(float(value) for value in query_vector)
-        if len(values) !=self._settings.embedding_dimensions or not all(
-            isinfinite(value) for value in values
+
+        try:
+            values = tuple(float(value) for value in query_vector)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise AdapterError(
+                AdapterErrorCode.VECTOR_INVALID_INPUT,
+                "query vector contains a non-numeric value",
+            ) from exc
+        if len(values) != self._settings.embedding_dimensions or not all(
+            isfinite(value) for value in values
         ):
             raise AdapterError(
                 AdapterErrorCode.VECTOR_INVALID_INPUT,
                 "query vector does not match settings",
             )
-            
+
         await self.ensure_compatible()
-        
+
         try:
             response = await self._client.query_points(
                 collection_name=self._settings.qdrant_collection,
                 query=list(values),
                 using=self._settings.vector_name,
                 limit=effective_limit,
-                score_threshold=self._settings.retrieval_min_score, 
+                score_threshold=self._settings.retrieval_min_score,
                 with_payload=True,
                 with_vectors=False,
             )
@@ -194,17 +200,17 @@ class QdrantVectorStore(VectorStorePort):
                     chunk=self._chunk_from_point(point),
                     score=float(point.score),
                 )
-                for point in response.points 
+                for point in response.points
             )
         except (AttributeError, TypeError, ValueError) as exc:
             raise AdapterError(
                 AdapterErrorCode.VECTOR_RESPONSE,
                 "Qdrant returned an invalid point payload",
-            ) from exc 
-            
-        # Defensive quarantee even if a fake/ server ignores score_threshold.
+            ) from exc
+
+        # Defensively enforce the threshold if a fake or server ignores it.
         return tuple(
-            candidate 
+            candidate
             for candidate in candidates
             if candidate.score >= self._settings.retrieval_min_score
         )

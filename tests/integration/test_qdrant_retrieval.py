@@ -75,9 +75,7 @@ def make_chunks() -> tuple[Chunk, ...]:
 
 
 @pytest.fixture
-async def qdrant_fixture() -> AsyncIterator[
-    tuple[QdrantVectorStore, AsyncQdrantClient, Settings]
-]:
+async def qdrant_fixture() -> AsyncIterator[tuple[QdrantVectorStore, AsyncQdrantClient, Settings]]:
     collection = f"test_task_21_{uuid4().hex}"
     settings = build_settings(collection=collection)
     client = AsyncQdrantClient(url=str(settings.qdrant_url))
@@ -104,7 +102,7 @@ async def test_search_returns_ranked_payloads_above_threshold_and_honors_top_k(
     chunks = make_chunks()
     vectors = (
         (1.0, 0.0, 0.0),
-        (0.8, 0.6, 0.0),
+        (0.81, 0.6, 0.0),
         (0.2, 0.98, 0.0),
     )
 
@@ -117,7 +115,7 @@ async def test_search_returns_ranked_payloads_above_threshold_and_honors_top_k(
         chunks[0].chunk_id,
         chunks[1].chunk_id,
     ]
-    assert [candidate.score for candidate in results] == pytest.approx([1.0, 0.8], abs=1e-5)
+    assert [candidate.score for candidate in results] == pytest.approx([1.0, 0.81], abs=1e-5)
     assert all(candidate.score >= settings.retrieval_min_score for candidate in results)
     assert results[0].chunk == chunks[0]
     assert results[1].chunk.locator.start_offset == chunks[1].locator.start_offset
