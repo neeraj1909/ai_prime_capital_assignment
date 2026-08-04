@@ -146,6 +146,25 @@ async def test_threshold_equality_is_qualifying_and_reaches_generator() -> None:
     assert generator.calls[0][0] == "Which revenue fact is documented?"
 
 
+@pytest.mark.parametrize(
+    "decision",
+    [
+        ModelDecision(answerable=False),
+        ModelDecision(answerable=True, answer="answer", citations=("unknown",)),
+        ModelDecision(answerable=True, answer="answer", citations=(), refused=True),
+    ],
+)
+async def test_invalid_generator_decisions_collapse_to_exact_fallback(
+    decision: ModelDecision,
+) -> None:
+    service, _, _, generator = make_service((candidate(),))
+    generator.decision = decision
+
+    answer = await service.execute("Which revenue fact is documented?")
+
+    assert_no_relevant_information(answer)
+
+
 @pytest.mark.parametrize("question", ["", "   ", "\n\t"])
 async def test_blank_question_is_rejected_before_any_downstream_call(question: str) -> None:
     service, embedder, vector_store, generator = make_service(())

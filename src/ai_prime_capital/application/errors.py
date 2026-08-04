@@ -16,6 +16,9 @@ class AdapterErrorCode(StrEnum):
     VECTOR_RESPONSE = "vector.response"
     VECTOR_WRITE = "vector.write"
     QUESTION_INVALID_INPUT = "question.invalid_input"
+    GENERATION_INVALID_INPUT = "generation.invalid_input"
+    GENERATION_UPSTREAM = "generation.upstream"
+    GENERATION_RESPONSE = "generation.response"
     INGESTION_INVALID_INPUT = "ingestion.invalid_input"
     INGESTION_RESPONSE = "ingestion.response"
 
