@@ -15,6 +15,7 @@ class AdapterErrorCode(StrEnum):
     VECTOR_INCOMPATIBLE = "vector.incompatible"
     VECTOR_RESPONSE = "vector.response"
     VECTOR_WRITE = "vector.write"
+    QUESTION_INVALID_INPUT = "question.invalid_input"
     INGESTION_INVALID_INPUT = "ingestion.invalid_input"
     INGESTION_RESPONSE = "ingestion.response"
 
