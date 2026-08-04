@@ -14,6 +14,8 @@ REQUIRED_SETTINGS = {
     "openai_chat_model": "test-chat-model",
 }
 
+pytestmark = pytest.mark.unit
+
 
 @pytest.fixture(autouse=True)
 def clear_settings_environment(monkeypatch: pytest.MonkeyPatch) -> None:
