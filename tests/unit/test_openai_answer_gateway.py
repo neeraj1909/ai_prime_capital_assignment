@@ -48,9 +48,23 @@ class FakeResponses:
         return response
 
 
+class FakeModels:
+    def __init__(self, responses: Sequence[Any] = ()) -> None:
+        self._responses = list(responses)
+        self.calls: list[str] = []
+
+    async def retrieve(self, model: str) -> Any:
+        self.calls.append(model)
+        response = self._responses.pop(0) if self._responses else SimpleNamespace(id=model)
+        if isinstance(response, BaseException):
+            raise response
+        return response
+
+
 class FakeClient:
     def __init__(self, responses: Sequence[Any]) -> None:
         self.responses = FakeResponses(responses)
+        self.models = FakeModels()
         self.closed = False
 
     async def close(self) -> None:
@@ -116,6 +130,34 @@ async def test_generate_uses_strict_response_contract_and_untrusted_source_promp
     assert "chunk-a" in call["input"]
     assert source_text not in call["instructions"]
     assert "untrusted" in call["instructions"].lower()
+
+
+async def test_ensure_available_checks_the_configured_chat_model() -> None:
+    client = FakeClient(())
+    gateway = OpenAIAnswerGateway(build_settings(), client=client)  # type: ignore[arg-type]
+
+    await gateway.ensure_available()
+
+    assert client.models.calls == ["test-chat-model"]
+
+
+async def test_ensure_available_translates_provider_auth_failure() -> None:
+    client = FakeClient(())
+    client.models = FakeModels(
+        (
+            APIStatusError(
+                "unauthorized",
+                response=Response(401, request=Request("GET", "https://api.openai.test")),
+                body={"error": "unauthorized"},
+            ),
+        )
+    )
+    gateway = OpenAIAnswerGateway(build_settings(), client=client)  # type: ignore[arg-type]
+
+    with pytest.raises(AdapterError) as error:
+        await gateway.ensure_available()
+
+    assert error.value.code is AdapterErrorCode.GENERATION_UPSTREAM
 
 
 async def test_refusal_is_translated_to_a_fail_closed_decision() -> None:

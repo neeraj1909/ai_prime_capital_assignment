@@ -59,6 +59,13 @@ def validated_uploads() -> tuple[ValidatedUpload, ValidatedUpload]:
     )
 
 
+def duplicate_validated_uploads() -> tuple[ValidatedUpload, ValidatedUpload]:
+    return (
+        ValidatedUpload("first.txt", "text/plain", b"same bytes"),
+        ValidatedUpload("renamed.txt", "text/plain", b"same bytes"),
+    )
+
+
 class SpyValidator:
     def __init__(self, result: Sequence[ValidatedUpload] | Exception) -> None:
         self.result = result
@@ -217,6 +224,19 @@ async def test_validator_cannot_drop_a_file_without_failing_before_side_effects(
 
     assert error.value.code is AdapterErrorCode.INGESTION_INVALID_INPUT
     assert len(validator.calls) == 1
+    assert events == []
+    assert embedder.inputs == []
+    assert vector_store.upserts == []
+
+
+async def test_duplicate_content_is_rejected_before_extraction_or_indexing() -> None:
+    service, _, _, embedder, vector_store, events = make_service(duplicate_validated_uploads())
+
+    with pytest.raises(AdapterError) as error:
+        await service.execute(raw_uploads())
+
+    assert error.value.code is AdapterErrorCode.INGESTION_INVALID_INPUT
+    assert "duplicate" in error.value.detail
     assert events == []
     assert embedder.inputs == []
     assert vector_store.upserts == []

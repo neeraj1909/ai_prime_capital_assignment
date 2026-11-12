@@ -69,6 +69,10 @@ async def qdrant_fixture() -> AsyncIterator[tuple[QdrantVectorStore, AsyncQdrant
         await client.get_collections()
     except Exception as exc:  # pragma: no cover - only exercised without a server
         await client.close()
+        if os.environ.get("REQUIRE_QDRANT_INTEGRATION") == "1":
+            pytest.fail(
+                f"Qdrant integration prerequisite unavailable at {settings.qdrant_url}: {exc}"
+            )
         pytest.skip(f"Qdrant integration prerequisite unavailable at {settings.qdrant_url}: {exc}")
 
     store = QdrantVectorStore(settings, client=client)

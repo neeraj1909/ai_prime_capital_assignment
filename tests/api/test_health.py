@@ -123,3 +123,18 @@ def test_health_routes_are_in_openapi() -> None:
 
     assert "/health/live" in schema["paths"]
     assert "/health/ready" in schema["paths"]
+
+
+def test_content_length_limit_rejects_large_requests_before_route_parsing() -> None:
+    app = create_app(settings=build_settings(), factory=RecordingFactory(ready=True))
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/questions",
+            content=b"{}",
+            headers={"Content-Length": str(50 * 1024 * 1024 + 1)},
+        )
+
+    assert response.status_code == 413
+    assert response.headers["content-type"].startswith("application/problem+json")
+    assert response.json()["code"] == "request.body_too_large"

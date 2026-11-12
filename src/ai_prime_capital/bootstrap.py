@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
@@ -24,6 +25,8 @@ from .infrastructure.extractors.base import IncomingUpload
 from .infrastructure.extractors.registry import ExtractorRegistry, validate_uploads
 from .infrastructure.openai_gateway import OpenAIAnswerGateway, OpenAIEmbeddingGateway
 from .infrastructure.qdrant_store import QdrantVectorStore
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,7 +61,15 @@ class RuntimeResources:
 
     async def close(self) -> None:
         for resource in reversed(self.closers):
-            await resource.close()
+            try:
+                await resource.close()
+            except Exception:
+                # Shutdown is best effort; one client must not prevent later
+                # clients from closing when another adapter is already broken.
+                LOGGER.warning(
+                    "resource_close_failed",
+                    extra={"resource": type(resource).__name__},
+                )
 
 
 class ResourceInitializationError(RuntimeError):
@@ -88,6 +99,12 @@ async def build_configured_resources(settings: Settings) -> RuntimeResources:
     vector_store = QdrantVectorStore(settings)
 
     try:
+        # Readiness must represent the dependencies used by the public write and
+        # answer paths, not only Qdrant schema compatibility. These probes send
+        # no document or question content and fail closed on invalid credentials,
+        # inaccessible models, and provider outages.
+        await embedder.ensure_available()
+        await generator.ensure_available()
         await vector_store.ensure_compatible()
     except AdapterError as exc:
         for resource in (vector_store, generator, embedder):

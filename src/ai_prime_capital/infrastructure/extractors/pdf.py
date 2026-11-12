@@ -27,6 +27,22 @@ class PdfExtractor:
     def _extract_sync(
         self,
         content: bytes,
+        file_name: str,
+    ) -> tuple[ExtractedBlock, ...]:
+        try:
+            return self._extract_sync_impl(content, file_name)
+        except UploadRejected:
+            raise
+        except Exception as error:
+            # Keep parser-specific failures inside the stable upload contract.
+            raise UploadRejected(
+                UploadErrorCode.INVALID_DOCUMENT,
+                "PDF document is invalid",
+            ) from error
+
+    def _extract_sync_impl(
+        self,
+        content: bytes,
         _file_name: str,
     ) -> tuple[ExtractedBlock, ...]:
         try:

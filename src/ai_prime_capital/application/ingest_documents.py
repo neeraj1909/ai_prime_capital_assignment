@@ -82,9 +82,15 @@ class IngestDocuments:
         prepared: list[tuple[str, ValidatedUpload, tuple[Chunk, ...]]] = []
         all_chunks: list[Chunk] = []
 
+        document_ids = tuple(document_id(upload.content) for upload in validated)
+        if len(set(document_ids)) != len(document_ids):
+            raise AdapterError(
+                AdapterErrorCode.INGESTION_INVALID_INPUT,
+                "duplicate document content is not allowed in one request",
+            )
+
         # Extract and chunk every document before embedding any document.
-        for upload in validated:
-            current_document_id = document_id(upload.content)
+        for current_document_id, upload in zip(document_ids, validated, strict=True):
             blocks = await self._extractor.extract(
                 upload.content,
                 file_name=upload.display_name,

@@ -57,6 +57,24 @@ When answerable=true, cite one or more exact IDs from the allowed source IDs in 
 Never invent source IDs, source metadata, or facts that are not supported by the sources.""".strip()
 
 
+async def _ensure_model_available(
+    client: AsyncOpenAI,
+    *,
+    model: str,
+    error_code: AdapterErrorCode,
+    resource_name: str,
+) -> None:
+    """Verify provider credentials and model access without sending user data."""
+
+    try:
+        await client.models.retrieve(model)
+    except (APITimeoutError, APIConnectionError, APIStatusError, OpenAIError) as exc:
+        raise AdapterError(
+            error_code,
+            f"{resource_name} provider unavailable",
+        ) from exc
+
+
 class OpenAIEmbeddingGateway(EmbedderPort):
     """Translate the async OpenAI embedding API into the application port."""
 
@@ -66,6 +84,14 @@ class OpenAIEmbeddingGateway(EmbedderPort):
             api_key=settings.openai_api_key.get_secret_value(),
             timeout=settings.openai_timeout_seconds,
             max_retries=0,
+        )
+
+    async def ensure_available(self) -> None:
+        await _ensure_model_available(
+            self._client,
+            model=self._settings.openai_embedding_model,
+            error_code=AdapterErrorCode.EMBEDDING_UPSTREAM,
+            resource_name="embedding",
         )
 
     async def embed(self, texts: Sequence[str]) -> tuple[tuple[float, ...], ...]:
@@ -140,6 +166,11 @@ class OpenAIEmbeddingGateway(EmbedderPort):
                         AdapterErrorCode.EMBEDDING_UPSTREAM,
                         "embedding provider rejected the request",
                     ) from exc
+            except OpenAIError as exc:
+                raise AdapterError(
+                    AdapterErrorCode.EMBEDDING_UPSTREAM,
+                    "embedding provider failed",
+                ) from exc
 
             await asyncio.sleep(min(2.0, 0.25 * (2**attempt)))
 
@@ -166,6 +197,14 @@ class OpenAIAnswerGateway(GeneratorPort):
             api_key=settings.openai_api_key.get_secret_value(),
             timeout=settings.openai_timeout_seconds,
             max_retries=0,
+        )
+
+    async def ensure_available(self) -> None:
+        await _ensure_model_available(
+            self._client,
+            model=self._settings.openai_chat_model,
+            error_code=AdapterErrorCode.GENERATION_UPSTREAM,
+            resource_name="answer",
         )
 
     async def generate(
